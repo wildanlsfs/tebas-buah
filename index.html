@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <title>Tebas Buah!</title>
+  <meta name="description" content="Tebas buah dengan ayunan tangan di depan webcam: semangka, jeruk, mangga, buah naga, manggis, nanas. Hindari batu! Bisa juga dengan geser jari atau mouse. Gratis, langsung di browser." />
+  <meta name="theme-color" content="#5a3720" />
+  <meta property="og:title" content="Tebas Buah! — main sambil bergerak" />
+  <meta property="og:description" content="Kedua tanganmu jadi pedang. Tebas buahnya, hindari batunya." />
+  <!-- aplikasi HP (PWA) -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Tebas Buah" />
+  <meta name="format-detection" content="telephone=no" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+  { "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  } }
+  </script>
+</head>
+<body>
+  <div id="bg"></div>
+  <canvas id="splat"></canvas>
+  <canvas id="game"></canvas>
+  <canvas id="trail"></canvas>
+  <div id="labels" aria-hidden="true"></div>
+  <div id="pops" aria-hidden="true"></div>
+  <div id="flash"></div>
+
+  <!-- kotak kamera: bisa dikecilkan, posisi kiri/kanan diatur di Pengaturan -->
+  <div id="cam" class="right" hidden>
+    <div class="cam-view">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="pose"></canvas>
+      <div id="cam-load"><i class="spin"></i><span id="cam-load-txt">Menyiapkan kamera…</span></div>
+    </div>
+    <div id="cam-status" aria-live="polite">kamera mati</div>
+    <button id="btn-cam-fold" aria-label="Kecilkan kotak kamera">▾</button>
+    <!-- petunjuk posisi badan (mundur / maju / ke tengah), muncul sebagai gelembung di atas kotak kamera -->
+    <div id="tip" hidden></div>
+  </div>
+
+  <div id="hud" hidden>
+    <div class="hud-row">
+      <div class="pill score"><small>SKOR</small><b id="score">0</b></div>
+      <div class="pill time" id="time-pill"><small>WAKTU</small><b id="time">60</b><i class="bar"><i id="time-bar"></i></i></div>
+      <div class="pill hearts" id="hearts" aria-label="Nyawa"></div>
+      <div class="pause-wrap">
+        <button id="btn-pause" class="round" aria-label="Jeda">⏸</button>
+        <span class="hands-hint" id="hands-hint">🙌 tahan = jeda</span>
+      </div>
+    </div>
+    <div id="effect" hidden><span id="effect-txt"></span><i id="effect-bar"></i></div>
+    <div id="banner" aria-live="polite"></div>
+    <div id="hold" hidden><i></i><span>🙌</span></div>
+  </div>
+  <div id="prompt" hidden><div id="prompt-big"></div><div id="prompt-small"></div></div>
+  <div id="toast" aria-live="polite"></div>
+
+  <section id="menu" class="screen">
+    <div class="menu-card">
+      <div class="logo" aria-label="Tebas Buah"><span class="l1">TEBAS</span><span class="l2">BUAH!</span></div>
+      <p class="tag" id="menu-tag">Tanganmu jadi pedang. <b>Tebas salah satu buah</b> untuk mulai!</p>
+      <div class="mode" role="radiogroup" aria-label="Main pakai">
+        <button role="radio" data-input="camera"><span class="ic">📷</span><b>Kamera</b><small id="cam-line">ayunkan tangan</small></button>
+        <button role="radio" data-input="touch"><span class="ic">👆</span><b>Sentuh</b><small>geser jari / mouse</small></button>
+      </div>
+      <div class="menu-btns">
+        <button class="chip" id="btn-practice">🎓 Latihan</button>
+        <button class="chip" id="btn-settings" aria-label="Pengaturan">⚙️ <span class="lbl">Atur</span></button>
+        <button class="chip round-chip" id="btn-sound" aria-label="Suara">🔊</button>
+        <button class="chip install" id="btn-install" hidden>📲 Pasang di HP</button>
+      </div>
+      <ul class="bests" id="bests"></ul>
+      <p class="fine">Kamera hanya dipakai di perangkat ini untuk membaca gerakan tangan; gambar tidak dikirim ke mana pun. Beri jarak aman dari benda di sekitarmu ya.</p>
+    </div>
+  </section>
+
+  <section id="result" class="screen" hidden>
+    <div class="dialog">
+      <div class="res-mode" id="res-mode"></div>
+      <div class="stars" id="res-stars"><i>★</i><i>★</i><i>★</i></div>
+      <div class="res-score"><b id="res-score">0</b><small id="res-best"></small></div>
+      <ul class="res-stats" id="res-stats"></ul>
+      <p class="fine dark" id="res-hint">Tebas buah <b>Lagi</b> atau <b>Menu</b> ↓</p>
+    </div>
+  </section>
+
+  <section id="pause" class="screen" hidden>
+    <div class="dialog">
+      <h2>Jeda ⏸</h2>
+      <p id="pause-msg" class="warn" hidden>Kamu tidak terlihat di kamera. Kembali ke depan kamera ya!</p>
+      <p id="pause-cam" class="fine dark">Tebas buah <b>Lanjut</b>, atau angkat <b>dua tangan</b> 🙌</p>
+      <button class="chip big" id="btn-resume">▶ Lanjut</button>
+      <div class="dlg-row">
+        <button class="chip ghost" id="btn-quit">🏠 Menu</button>
+        <button class="chip ghost" id="btn-sound2" aria-label="Suara">🔊 Suara</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="settings" class="screen" hidden>
+    <div class="dialog" role="dialog" aria-labelledby="set-title">
+      <h2 id="set-title">Pengaturan ⚙️</h2>
+      <div class="set-row"><span>🔊 Suara</span><div class="seg" data-set="sound"><button data-v="on">Nyala</button><button data-v="off">Mati</button></div></div>
+      <div class="set-row"><span>📷 Kamera</span><div class="seg" data-set="camera"><button data-v="on">Nyala</button><button data-v="off">Mati</button></div></div>
+      <div class="set-row"><span>↔️ Kotak kamera</span><div class="seg" data-set="side"><button data-v="left">Kiri</button><button data-v="right">Kanan</button></div></div>
+      <button class="chip big" id="btn-settings-close">Selesai</button>
+    </div>
+  </section>
+
+  <section id="camerr" class="screen" hidden>
+    <div class="dialog" role="alertdialog" aria-labelledby="camerr-title">
+      <h2 id="camerr-title">Kamera belum bisa dipakai 📷</h2>
+      <p id="camerr-msg"></p>
+      <button class="chip big" id="btn-cam-retry">🔁 Coba lagi</button>
+      <button class="chip ghost" id="btn-cam-touch">👆 Main dengan sentuhan</button>
+    </div>
+  </section>
+
+  <section id="install" class="screen" hidden>
+    <div class="dialog" role="dialog" aria-labelledby="inst-title">
+      <h2 id="inst-title">Pasang di HP 📲</h2>
+      <ol class="steps">
+        <li>Ketuk tombol <b>Bagikan</b> <span class="share">⬆︎</span> di bawah layar Safari.</li>
+        <li>Pilih <b>Tambah ke Layar Utama</b>.</li>
+        <li>Buka <b>Tebas Buah</b> dari layar utama. Bisa main tanpa internet setelah dibuka sekali.</li>
+      </ol>
+      <button class="chip big" id="btn-install-close">Oke</button>
+    </div>
+  </section>
+
+  <noscript>Game ini butuh JavaScript.</noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
