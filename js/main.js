@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { FRUITS, NORMAL, makeFruit, makeHalves } from './fruits.js';
 import { createHands, drawSkeleton } from './hands.js';
 import { sfx, unlock, setMuted, isMuted } from './audio.js';
+import { CAM_VIDEO, lowLightTune, LightMeter, brightFrame, DARK_HINT_ID, DIM_HINT_ID } from './cam-light.js';
 import { load, save, MODES, modeById, starsFor } from './save.js';
 
 const $ = (id) => document.getElementById(id);
@@ -712,6 +713,26 @@ function settle(p) {
 
 // Status kamera di layar: memuat (kotak kamera + baris kecil di tombol Kamera), siap, atau gagal (dialog).
 function camLoad(text) { $('cam-load').hidden = !text; if (text) $('cam-load-txt').textContent = text; }
+let meter = null, lightShown = '';
+const lowSmall = document.createElement('canvas');   // sumber pose ukuran kecil saat video besar (720p) tanpa perlu dicerahkan
+function poseSrc(w, h) {
+  const g = meter ? meter.gain : 1;
+  const b = brightFrame(video, g, w, h);
+  if (b !== video) return b;
+  if (video.videoWidth <= 640) return video;
+  if (lowSmall.width !== w || lowSmall.height !== h) { lowSmall.width = w; lowSmall.height = h; }
+  lowSmall.getContext('2d').drawImage(video, 0, 0, w, h);
+  return lowSmall;
+}
+// petunjuk ruangan gelap/redup di baris kamera; hanya diubah saat tingkatnya berganti
+function lightHint() {
+  if (!meter || !camReady) return;
+  meter.sample();
+  const lv = meter.level;
+  if (lv === lightShown) return;
+  lightShown = lv;
+  if (lv === 'dark') camLine(DARK_HINT_ID, 'bad'); else if (lv === 'dim') camLine(DIM_HINT_ID, 'bad'); else camLine('siap ✓', 'ok');
+}
 function camLine(text, cls = '') { const el = $('cam-line'); el.textContent = text; el.className = cls; }
 let camStream = null, camGen = 0;
 async function startCamera() {
@@ -722,7 +743,7 @@ async function startCamera() {
     $('cam').hidden = false; applyCam();
     camLoad('Izinkan kamera ya 📷'); camLine('menyiapkan…', 'busy');
     if (!DEBUG) $('cam-status').textContent = 'menyiapkan kamera…';
-    const gum = navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 }, facingMode: 'user' }, audio: false })
+    const gum = navigator.mediaDevices.getUserMedia({ video: CAM_VIDEO, audio: false })
       .then((st) => { if (!pipe) camLoad('Memuat pembaca gerakan…'); return st; });
     const order = FORCE && PIPE_NAME[FORCE] ? [FORCE] : ['wgpu', 'wcpu', 'ugpu'];
     const fresh = !pipe;   // pembaca pose sudah siap dari sesi kamera sebelumnya? (tidak perlu diuji ulang)
@@ -732,6 +753,8 @@ async function startCamera() {
     catch (e) { gum.then((st) => st.getTracks().forEach((t) => t.stop())).catch(() => {}); throw e; }
     camStream = stream;
     video.srcObject = stream; await video.play();
+    try { lowLightTune(stream.getVideoTracks()[0]).catch(() => {}); } catch { /* opsional */ }
+    meter = new LightMeter(video); lightShown = '';
     fitPoseCanvas();
     camReady = true;
     camLoad(''); camLine('siap ✓', 'ok');
@@ -744,7 +767,7 @@ async function startCamera() {
     const loop = (t, meta) => {
       if (gen !== camGen) return;   // kamera sudah dimatikan
       camPerf.cam = meta ? meta.presentedFrames : camPerf.cam + 1;
-      frameFresh = true; sendFrame(); trialWatch(performance.now());
+      frameFresh = true; lightHint(); sendFrame(); trialWatch(performance.now());
       if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(loop); else setTimeout(loop, 33);
     };
     loop();
@@ -755,7 +778,7 @@ async function startCamera() {
 function stopCamera() {
   camGen++; camReady = false;
   if (camStream) camStream.getTracks().forEach((t) => t.stop());
-  camStream = null; video.srcObject = null;
+  camStream = null; video.srcObject = null; meter = null;
   $('cam').hidden = true; $('tip').hidden = true; camLine('ayunkan tangan');
 }
 // ukuran kanvas kerangka & bentuk kotak kamera mengikuti video (HP tegak = gambar tegak)
@@ -799,7 +822,7 @@ function sendFrame() {
   const ts = performance.now();
   if (pipe === 'ugpu') {
     let res = null;
-    try { res = mainMark.detectForVideo(video, ts); } catch { /* frame dilewati */ }
+    try { res = mainMark.detectForVideo(meter && meter.gain > 1.06 ? brightFrame(video, meter.gain, 320, Math.round(320 * (video.videoHeight || 480) / (video.videoWidth || 640))) : video, ts); } catch { /* frame dilewati */ }
     const ms = performance.now() - ts;
     busy = false;
     gotPose(res ? res.landmarks || [] : [], ts, { ms, grab: 0, xfer: 0, cyc: ms });
@@ -811,10 +834,13 @@ function sendFrame() {
     if (!poseWorker || pipe[0] !== 'w') { img.close(); busy = false; return; }
     poseWorker.postMessage({ type: 'frame', img, ts }, [img]);
   };
-  if (useVF) {
+  const w = 320, h = Math.round(w * (video.videoHeight || 480) / (video.videoWidth || 640));
+  const src = poseSrc(w, h);
+  // VideoFrame hanya untuk video kecil tanpa pencerahan; 720p / hasil cerah lewat ImageBitmap kecil
+  if (useVF && src === video) {
     try { post(new VideoFrame(video, { timestamp: Math.round(ts * 1000) })); return; } catch { useVF = false; }
   }
-  createImageBitmap(video, { resizeWidth: 320, resizeHeight: 240, resizeQuality: 'low' }).then(post).catch(() => { busy = false; });
+  (src === video ? createImageBitmap(video, { resizeWidth: w, resizeHeight: h, resizeQuality: 'low' }) : createImageBitmap(src)).then(post).catch(() => { busy = false; });
 }
 function gotPose(all, ts, m) {
   const now = performance.now();
